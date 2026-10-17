@@ -132,6 +132,13 @@ extends Wrapper {
         return new Matrix4f(object);
     }
 
+    // 1.17 ~ 1.20.4 兜底：最近一次 getFov(Camera, partialTicks, useFovSetting) 的返回值（度）。
+    // 该窗口的 getProjectionMatrix(double) 读出来不可用时，用它自建透视矩阵。
+    // 其它版本返回 NaN，不会启用该兜底。
+    public double getCameraFov() {
+        return MEntityRenderer.getCameraFov(EntityRenderer.vapeInstance.getMappings().RY);
+    }
+
     public void setUseShader(boolean bl) {
         if (ForgeVersion.MC_1_7_10.Y()) {
             MEntityRenderer.C(EntityRenderer.vapeInstance.getMappings().RY, this.I, bl);

@@ -115,17 +115,21 @@ extends Mapping {
                     MMatrix4f mMatrix4f5 = this;
                     this.z = this.Y(string5, bl5, clazz5, classArray5);
                 } else if (ForgeVersion.MC_1_20_1.d()) {
-                    // 1.20.1 joml Matrix4f.get(FloatBuffer) instance method.
+                    // 1.20.1：joml 的 get(FloatBuffer) 返回 java.nio.FloatBuffer（不是 Matrix4f）。
+                    // 返回类型登记错会让这条映射解析失败、每次 invoke 返回 null，导致所有
+                    // joml Matrix4f → RenderMatrix4f 的读取都是全零矩阵（投影/视图/文字矩阵全废）。
                     Class[] classArray2 = new Class[]{FloatBuffer.class};
-                    Class clazz2 = MappedClasses.qr;
+                    Class<FloatBuffer> clazz2 = FloatBuffer.class;
                     boolean bl2 = false;
                     String string2 = "get";
                     MMatrix4f mMatrix4f2 = this;
                     this.M = this.Y(string2, bl2, clazz2, classArray2);
+                    // 写入矩阵用 joml 的 set(FloatBuffer)（返回自身）；<init>(FloatBuffer) 会调不到
+                    // （MappingMethod.invokeVoid 只查 METHODS_BY_ID，构造器在 CONSTRUCTORS_BY_ID）。
                     Class[] classArray3 = new Class[]{FloatBuffer.class};
-                    Class<Void> clazz3 = Void.TYPE;
+                    Class clazz3 = MappedClasses.qr;
                     boolean bl3 = false;
-                    String string3 = "<init>";
+                    String string3 = "set";
                     MMatrix4f mMatrix4f3 = this;
                     this.X = this.Y(string3, bl3, clazz3, classArray3);
                     Class[] classArray4 = new Class[]{MappedClasses.q2};

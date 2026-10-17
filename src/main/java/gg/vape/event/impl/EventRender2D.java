@@ -33,6 +33,9 @@ extends Event {
         }
         displayWidth = Minecraft.J();
         displayHeight = Minecraft.h();
+        // 2D 阶段的立即模式绘制（MC 字体/物品图标）不走批次，批次前的状态重申覆盖不到，
+        // 混合关闭时贴图透明像素会被写成黑色（黑底）。这里幂等重申一次。
+        gg.vape.utils.render.RenderBatchManager.ensureGuiBlendState();
         GlStateManager.tryBlendFuncSeparate(770, 771, 1, 0);
         GuiRenderPrimitives.o(displayWidth, displayHeight);
         ClientSettings clientSettings = Vape.INSTANCE.getModManager()

@@ -14,6 +14,9 @@ import gg.vape.utils.render.BufferedGuiRenderPrimitives;
 import gg.vape.utils.render.GuiRenderPrimitives;
 import gg.vape.utils.render.ImageRenderer;
 import gg.vape.utils.render.OpenGlBackendHolder;
+import gg.vape.utils.render.RenderBatchManager;
+import gg.vape.utils.render.RenderMatrix4f;
+import gg.vape.utils.render.RenderMatrixStack;
 import gg.vape.utils.render.RenderUtil;
 import gg.vape.utils.render.RenderUtils;
 import gg.vape.value.BooleanValue;
@@ -23,6 +26,7 @@ import gg.vape.wrapper.impl.Entity;
 import gg.vape.wrapper.impl.EntityPlayer;
 import gg.vape.wrapper.impl.EntityPlayerSP;
 import gg.vape.wrapper.impl.FontRenderer;
+import gg.vape.wrapper.impl.ForgeVersion;
 import gg.vape.wrapper.impl.GlStateManager;
 import gg.vape.wrapper.impl.MatrixStack;
 import gg.vape.wrapper.impl.Minecraft;
@@ -105,22 +109,99 @@ extends Mod {
                 RenderUtils.f();
                 OpenGlBackendHolder.backend.popMatrix();
             }
-            OpenGlBackendHolder.backend.pushMatrix();
-            RenderUtils.g();
-            OpenGlBackendHolder.backend.translate(arrowX + (double)centerX, arrowY + (double)centerY, 0.0);
-            OpenGlBackendHolder.backend.rotate(angle - 90.0f, 0.0f, 0.0f, 1.0f);
-            OpenGlBackendHolder.backend.scale(0.375, 0.5, 0.0);
-            Color configuredColor = this.color.getMutableColor();
-            int alpha = configuredColor.getAlpha();
-            if (this.scaleOpacity.getEffectiveValue().booleanValue()) {
-                alpha = 255 - distanceAlpha;
+            // 1.20.1：图标已改到世界阶段画完并立即冲刷（见 drawArrowIconsBeforeHud），
+            // 这里只保留距离文字，保证箭头不再压在游戏 HUD 之上。
+            if (!this.shouldDrawIconsInWorldPhase()) {
+                OpenGlBackendHolder.backend.pushMatrix();
+                RenderUtils.g();
+                OpenGlBackendHolder.backend.translate(arrowX + (double)centerX, arrowY + (double)centerY, 0.0);
+                OpenGlBackendHolder.backend.rotate(angle - 90.0f, 0.0f, 0.0f, 1.0f);
+                OpenGlBackendHolder.backend.scale(0.375, 0.5, 0.0);
+                Color configuredColor = this.color.getMutableColor();
+                int alpha = configuredColor.getAlpha();
+                if (this.scaleOpacity.getEffectiveValue().booleanValue()) {
+                    alpha = 255 - distanceAlpha;
+                }
+                Color arrowColor = new Color(configuredColor.getRed(), configuredColor.getGreen(), configuredColor.getBlue(), alpha);
+                ImageRenderer.drawResWithShadow(arrowColor, -16.0f, 0.0f, "exo", 1.0f, false);
+                RenderUtils.f();
+                OpenGlBackendHolder.backend.popMatrix();
             }
-            Color arrowColor = new Color(configuredColor.getRed(), configuredColor.getGreen(), configuredColor.getBlue(), alpha);
-            ImageRenderer.drawResWithShadow(arrowColor, -16.0f, 0.0f, "exo", 1.0f, false);
-            RenderUtils.f();
-            OpenGlBackendHolder.backend.popMatrix();
         }
         this.projectedPositions.clear();
+    }
+
+    // 箭头图标在 1.20.1 上改为"世界阶段画完并立即冲刷"：2D 阶段的 GUI 批次要到帧末才冲刷，
+    // 那时游戏 HUD 已经画完 ⇒ 箭头会压在 HUD/其它 UI 之上。其它版本保持原有 2D 阶段绘制。
+    private boolean shouldDrawIconsInWorldPhase() {
+        return ForgeVersion.MC_1_20_1.d() && !ForgeVersion.MC_1_20_6.d() && GuiRenderPrimitives.d();
+    }
+
+    private Color getArrowColor(int distanceAlpha) {
+        Color configuredColor = this.color.getMutableColor();
+        int alpha = configuredColor.getAlpha();
+        if (this.scaleOpacity.getEffectiveValue().booleanValue()) {
+            alpha = 255 - distanceAlpha;
+        }
+        return new Color(configuredColor.getRed(), configuredColor.getGreen(), configuredColor.getBlue(), alpha);
+    }
+
+    // 与 onRender2D 里同一套角度/椭圆半径算法，只是把图标放到世界阶段画。
+    private void drawArrowIconBeforeHud(double[] projectedPosition, int displayWidth, int displayHeight,
+            float centerX, float centerY) {
+        double screenX = projectedPosition[0];
+        double screenY = (double)Minecraft.h() - projectedPosition[1];
+        if (projectedPosition[2] < 1.0 && this.isOnScreen(screenX / 2.0, screenY / 2.0, displayWidth, displayHeight)) {
+            return;
+        }
+        float angle = this.getAngle(centerX, screenX / 2.0, centerY, screenY / 2.0) + (float)(projectedPosition[2] > 1.0 ? 180 : 0);
+        double horizontalRadius = (double)centerX * (Double)this.radiusScale.getValue();
+        double verticalRadius = (double)centerY * (Double)this.radiusScale.getValue();
+        double arrowX = Math.sqrt(1.0 / (1.0 / (horizontalRadius * horizontalRadius)
+                + Math.pow(Math.tan(Math.toRadians(angle)), 2.0) / (verticalRadius * verticalRadius)));
+        double arrowY = Math.tan(Math.toRadians(angle)) * arrowX;
+        float wrappedAngle = MathUtil.wrapAngleTo180(angle + 90.0f);
+        if (wrappedAngle < 0.0f) {
+            arrowX = -arrowX;
+            if (wrappedAngle > -180.0f) {
+                arrowY = -arrowY;
+            }
+        }
+        OpenGlBackendHolder.backend.pushMatrix();
+        RenderUtils.g();
+        OpenGlBackendHolder.backend.translate(arrowX + (double)centerX, arrowY + (double)centerY, 0.0);
+        OpenGlBackendHolder.backend.rotate(angle - 90.0f, 0.0f, 0.0f, 1.0f);
+        OpenGlBackendHolder.backend.scale(0.375, 0.5, 0.0);
+        ImageRenderer.drawResWithShadow(this.getArrowColor(0), -16.0f, 0.0f, "exo", 1.0f, false);
+        RenderUtils.f();
+        OpenGlBackendHolder.backend.popMatrix();
+    }
+
+    // 用 GUI 正交投影把箭头图标画完并立即冲刷（与 ESP2D 相同的做法），随后还原
+    // 投影/视图/矩阵栈，不影响随后 ESP/Tracers/NameTags 的世界批次。
+    private void drawArrowIconsBeforeHud() {
+        int displayWidth = Minecraft.J();
+        int displayHeight = Minecraft.h();
+        float centerX = (float)displayWidth / 4.0f;
+        float centerY = (float)displayHeight / 4.0f;
+        RenderMatrix4f savedProjection = BufferedGuiRenderPrimitives.projectionMatrix;
+        RenderMatrix4f savedView = BufferedGuiRenderPrimitives.viewMatrix;
+        RenderMatrixStack savedMatrixStack = BufferedGuiRenderPrimitives.matrixStack;
+        BufferedGuiRenderPrimitives.projectionMatrix = new RenderMatrix4f().setIdentity()
+                .setOrthographic(0.0f, (float)displayWidth / 2.0f, (float)displayHeight / 2.0f, 0.0f, 21000.0f, -21000.0f);
+        BufferedGuiRenderPrimitives.viewMatrix = new RenderMatrix4f().setIdentity();
+        BufferedGuiRenderPrimitives.matrixStack = new RenderMatrixStack();
+        try {
+            for (Map.Entry<Entity, double[]> entry : this.projectedPositions.entrySet()) {
+                this.drawArrowIconBeforeHud(entry.getValue(), displayWidth, displayHeight, centerX, centerY);
+            }
+            RenderBatchManager.getInstance().flushGuiBatches(0.0f, false);
+        }
+        finally {
+            BufferedGuiRenderPrimitives.projectionMatrix = savedProjection;
+            BufferedGuiRenderPrimitives.viewMatrix = savedView;
+            BufferedGuiRenderPrimitives.matrixStack = savedMatrixStack;
+        }
     }
 
 
@@ -142,6 +223,12 @@ extends Mod {
             this.projectedPositions.put(entity, projectedPosition);
         }
         RenderUtil.Y();
+        // 1.20.1：把箭头图标提前到世界阶段画完并立即冲刷，使其排在游戏 HUD 之前。
+        if (this.shouldDrawIconsInWorldPhase()
+                && !this.projectedPositions.isEmpty()
+                && !OffscreenRenderContext.isRenderingOffscreen()) {
+            this.drawArrowIconsBeforeHud();
+        }
     }
 
     public boolean shouldTrack(Entity entity) {

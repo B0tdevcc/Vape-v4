@@ -85,6 +85,13 @@ extends Wrapper {
             return true;
         }
         String string = this.x();
+        // 1.20.1 上 x()（getHoverName / 显示名）的映射解析失败时返回 null，旧代码紧接着
+        // string.isEmpty() 会抛 NPE；这个异常会一路冒到调用方（例如 ItemESP.onPostTick
+        // 里 new ItemESPGroup(...) → rebuildStacks() → isNotNull()），导致物品商品分组
+        // 一个都建不起来、名牌整条链静默失效。名字取不到时保守地当作"非空物品"。
+        if (string == null) {
+            return false;
+        }
         return string.isEmpty() || string.equals("Air");
     }
 

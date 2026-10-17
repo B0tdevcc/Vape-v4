@@ -23,7 +23,20 @@ extends Mapping {
     }
 
     public Object i(String string) {
-        return this.I.newInstance(string);
+        // 1.20.1 实测：<init>(String) 这条桥在运行时抛 NPE（Reflections.invokeConstructor
+        // 里 CONSTRUCTORS_BY_ID 没登记 → 直接 NPE），原样抛出会一路打断渲染循环
+        // （ItemESP 名牌"有底没字"就是这么来的）。这里改为返回 null，
+        // 由调用方退到 MC 字体的 String 重载（FontRenderer.p(...)）。
+        try {
+            Object created = this.I.newInstance(string);
+            if (created != null) {
+                return created;
+            }
+        }
+        catch (Throwable constructorFailure) {
+            // 见上：缺构造器/映射不匹配时不再向上抛。
+        }
+        return null;
     }
 
     public String W(Object object) {

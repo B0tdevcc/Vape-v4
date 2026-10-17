@@ -62,8 +62,21 @@ public class BlurRegionRenderer {
         x = (int)((double)x * uiScale);
         y = (int)((double)y * uiScale);
         int framebufferHeight = Minecraft.h();
+        int framebufferWidth = Minecraft.J();
         int sourceY = (int)((float)framebufferHeight - (float)y * captureScale - (float)this.regionHeight);
-        if (!this.textureInitialized) {
+        int sourceX = (int)((float)x * captureScale);
+        // 捕获区域必须完全落在 framebuffer 内：glCopyTexSubImage2D 越界时拷贝会被丢弃，
+        // 纹理保持 glTexImage2D(..., null) 的未初始化内容（全黑），而 blur pass 输出 alpha
+        // 恒为 1（不透明）⇒ 面板/背景被画成不透明黑色矩形。越界时整帧跳过模糊。
+        if (this.regionWidth <= 0 || this.regionHeight <= 0
+                || sourceX < 0 || sourceY < 0
+                || sourceX + this.regionWidth > framebufferWidth
+                || sourceY + this.regionHeight > framebufferHeight) {
+            return;
+        }
+        if (!this.textureInitialized
+                || this.allocatedWidth != this.regionWidth
+                || this.allocatedHeight != this.regionHeight) {
             this.initializeTexture();
         }
         float renderScale = 0.5f;
@@ -115,15 +128,25 @@ public class BlurRegionRenderer {
     }
 
     private void initializeTexture() {
-        this.textureId = GL11.glGenTextures();
+        if (this.textureId == -1) {
+            this.textureId = GL11.glGenTextures();
+        }
         GL11.glBindTexture((int)3553, (int)this.textureId);
         GL11.glTexParameteri((int)3553, (int)10241, (int)9729);
         GL11.glTexParameteri((int)3553, (int)10240, (int)9729);
         GL11.glTexParameteri((int)3553, (int)10242, (int)33071);
         GL11.glTexParameteri((int)3553, (int)10243, (int)33071);
         GL11.glTexImage2D((int)3553, (int)0, (int)6407, (int)this.regionWidth, (int)this.regionHeight, (int)0, (int)6407, (int)5121, (ByteBuffer)null);
+        // 记录已分配尺寸：区域尺寸变化后必须重新分配，否则后续 glCopyTexSubImage2D
+        // 的拷贝区域会超出纹理尺寸（GL_INVALID_VALUE），纹理内容保持未初始化的全黑。
+        this.allocatedWidth = this.regionWidth;
+        this.allocatedHeight = this.regionHeight;
         this.textureInitialized = true;
     }
+
+    // 已分配的捕获纹理尺寸（见 initializeTexture 注释）。
+    private int allocatedWidth;
+    private int allocatedHeight;
 
     static {
         BlurRegionRenderer.setLegacyGlobalFlag(false);

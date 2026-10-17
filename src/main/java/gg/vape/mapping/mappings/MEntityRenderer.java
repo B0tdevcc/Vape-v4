@@ -52,6 +52,18 @@ extends Mapping {
     public MappingMethod a;
     private MappingField A;
     private MappingMethod r;
+    // 1.17 ~ 1.20.4：GameRenderer 的投影矩阵是 getProjectionMatrix(double fov)，
+    // 没有 1.16.5 那种 (Camera,float,boolean)。rd/md 是补登记的 (double) 版本，
+    // L() 里按登记结果优先使用、登记失败则回退到旧路径。
+    private MappingMethod rd;
+    private MappingMethod md;
+    // 1.17 ~ 1.20.4 兜底用：最近一次 getFov 的返回值（度）。
+    // 当游戏投影矩阵读出来不可用（空/全零）时，用它自建透视矩阵。
+    private double lastCameraFov = Double.NaN;
+
+    public static double getCameraFov(MEntityRenderer mEntityRenderer) {
+        return mEntityRenderer.lastCameraFov;
+    }
 
     public static Object P(MEntityRenderer mEntityRenderer, Object object) {
         return mEntityRenderer.k(object);
@@ -95,6 +107,16 @@ extends Mapping {
         if (ForgeVersion.MC_1_20_6.d()) {
             double d = this.m.invokeDouble(object, object2, Float.valueOf(f), bl);
             return this.r.invokeObject(object, d);
+        }
+        // 1.17 ~ 1.20.4（含 1.20.1）：GameRenderer 只有 getProjectionMatrix(double fov)，
+        // 三参数的 (Camera,float,boolean) 版本不存在（登记会失败、invoke 返回 null，
+        // 于是投影矩阵退化成 GUI 正交矩阵、世界叠加物全不可见）。
+        // 只有 (double) 那两份都登记成功时才走新分支，否则保持 1.16.x 的老路径。
+        if (this.rd != null && !this.rd.hasResolutionFailed()
+                && this.md != null && !this.md.hasResolutionFailed()) {
+            double fov = this.md.invokeDouble(object, object2, Float.valueOf(f), bl);
+            this.lastCameraFov = fov;
+            return this.rd.invokeObject(object, fov);
         }
         return this.r.invokeObject(object, object2, Float.valueOf(f), bl);
     }
@@ -518,6 +540,15 @@ extends Mapping {
                 String string19 = "getProjectionMatrix";
                 MEntityRenderer mEntityRenderer19 = this;
                 this.r = this.Y(string19, bl17, clazz24, classArray4);
+                // 1.17 ~ 1.20.4：补登记 (double) 版本（见字段注释）。1.16.x 不登记 ⇒ 走老路径。
+                if (ForgeVersion.MC_1_17.d()) {
+                    Class[] classArrayFov = new Class[]{MappedClasses.lt, Float.TYPE, Boolean.TYPE};
+                    Class<Double> clazzFov = Double.TYPE;
+                    this.md = this.Y("getFov", true, clazzFov, classArrayFov);
+                    Class[] classArrayProj = new Class[]{Double.TYPE};
+                    Class clazzProj = MappedClasses.qr;
+                    this.rd = this.Y("getProjectionMatrix", true, clazzProj, classArrayProj);
+                }
             }
             Class[] classArray = new Class[]{Float.TYPE, Long.TYPE, MappedClasses.DQ};
             Class<Void> clazz25 = Void.TYPE;

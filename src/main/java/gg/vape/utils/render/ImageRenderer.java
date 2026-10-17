@@ -228,6 +228,9 @@ public class ImageRenderer {
         if (texture == null) {
             return;
         }
+        // 图标/贴图绘制入口：2D 阶段入口处 blend 可能仍是关闭的，立即模式绘制会在混合
+        // 关闭下把贴图的透明像素写成黑色（黑底）。这里幂等重申一次混合状态。
+        RenderBatchManager.ensureGuiBlendState();
         if (GuiRenderPrimitives.d()) {
             BufferedGuiRenderPrimitives.drawAtlasTexture(x, y, width, height, texture, resourceName, scale, color, bottomColor, shadow);
             return;

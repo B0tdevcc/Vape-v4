@@ -25,6 +25,8 @@ extends EventRenderTickBase {
 
     @Override
     public boolean fire() {
+        // 界面里的立即模式绘制（MC 字体/物品图标）同样需要混合，幂等重申一次。
+        RenderBatchManager.ensureGuiBlendState();
         GuiScreenNativeCallbackBridge.drawScreen(null, 0, 0, 0.0f);
         if (GuiRenderPrimitives.d()) {
             RenderThreadTaskQueue.runPendingTasks();

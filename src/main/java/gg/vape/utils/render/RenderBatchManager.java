@@ -193,11 +193,19 @@ public class RenderBatchManager {
                         supplier.get();
                     }
                     this.captureGlBindings();
+                    // standalone 回调里跑的是 MC 原生绘制，会随意改 blend/depthTest，
+                    // 这里重新落一遍 GUI 批次需要的栅格状态，避免泄漏到后续批次。
+                    RenderBatchManager.prepareGuiRasterState();
                     continue;
                 }
                 if (renderBatch.getDrawSetupCallback() != null) {
                     renderBatch.getDrawSetupCallback().get();
                 }
+                // 每个批次真正绘制前重申 GUI 栅格状态。saveAndPrepareGlState() 只在冲刷开始设置
+                // 一次，而批次之间会穿插 standalone/drawSetup 回调与 MC 原生绘制，它们可能关掉
+                // blend 或打开 depthTest：随后绘制的带纹理批次（图标/按钮贴图）就会在混合关闭
+                // 状态下画出不透明黑底。无泄漏时这些调用幂等，不影响其它版本。
+                RenderBatchManager.prepareGuiRasterState();
                 this.batchBuffer.stageBatch(renderBatch);
                 if (!this.batchResourcesBound) continue;
                 this.batchBuffer.draw();
@@ -223,6 +231,29 @@ public class RenderBatchManager {
             GL30.glBindVertexArray((int)0);
             this.batchResourcesBound = false;
         }
+    }
+
+    /**
+     * GUI 批次需要的栅格状态（与 {@link #saveAndPrepareGlState()} 开头一致）：
+     * 关剔除、开混合、SRC_ALPHA/ONE_MINUS_SRC_ALPHA、关深度测试。
+     * 用裸 GL 以免改写 {@code BufferedGuiRenderPrimitives.capabilityState}（那会被后续批次的
+     * 构建期快照带走）。无状态泄漏时幂等，因此不影响 1.16.x / 1.21.11 / 26.x 的输出。
+     */
+    private static void prepareGuiRasterState() {
+        GL11.glDisable((int)2884);
+        GL11.glEnable((int)3042);
+        GL11.glDisable((int)2929);
+        GlStateManager.Y(770, 771);
+    }
+
+    /**
+     * 幂等的 GUI 混合状态重申（只动混合）。2D/HUD 阶段里的立即模式绘制（MC 字体/物品图标
+     * 经 RenderItemTextBridge、ImageRenderer 的图标路径）不走批次，批次前的状态重申覆盖
+     * 不到它们；混合关闭时贴图透明像素会被写成黑色（黑底）。在 2D/GUI/图标入口各调一次。
+     */
+    public static void ensureGuiBlendState() {
+        GL11.glEnable((int)3042);
+        GlStateManager.Y(770, 771);
     }
 
     public void flushGuiBatches(float partialTicks) {

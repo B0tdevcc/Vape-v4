@@ -73,27 +73,33 @@ public class ItemESPGroup {
             EntityItem entityItem = new EntityItem(entityHandle);
             ItemStack itemStack = entityItem.getItemStack();
             if (!itemStack.isNotNull()) continue;
-            if (this.parent.isGroupingEnabled()) {
-                boolean merged = false;
-                for (ItemStack existingStack : this.stackedItems) {
-                    if (!existingStack.e(itemStack)) continue;
-                    existingStack.Y(existingStack.t() + itemStack.t());
-                    merged = true;
-                    break;
+            try {
+                if (this.parent.isGroupingEnabled()) {
+                    boolean merged = false;
+                    for (ItemStack existingStack : this.stackedItems) {
+                        if (!existingStack.e(itemStack)) continue;
+                        existingStack.Y(existingStack.t() + itemStack.t());
+                        merged = true;
+                        break;
+                    }
+                    if (merged) continue;
+                    ItemStack copyStack = ItemStack.S(itemStack.getItem());
+                    copyStack.i(itemStack.l());
+                    copyStack.s(itemStack.L());
+                    copyStack.Y(itemStack.t());
+                    this.stackedItems.add(copyStack);
+                    continue;
                 }
-                if (merged) continue;
-                ItemStack copyStack = ItemStack.S(itemStack.getItem());
-                copyStack.i(itemStack.l());
-                copyStack.s(itemStack.L());
-                copyStack.Y(itemStack.t());
-                this.stackedItems.add(copyStack);
-                continue;
+                ItemStack singleStack = ItemStack.S(itemStack.getItem());
+                singleStack.i(itemStack.l());
+                singleStack.s(itemStack.L());
+                singleStack.Y(itemStack.t());
+                this.stackedItems.add(singleStack);
             }
-            ItemStack singleStack = ItemStack.S(itemStack.getItem());
-            singleStack.i(itemStack.l());
-            singleStack.s(itemStack.L());
-            singleStack.Y(itemStack.t());
-            this.stackedItems.add(singleStack);
+            catch (Throwable stackFailure) {
+                // 单个物品的堆栈复制失败不应让整个分组失效：退化为直接使用原始 ItemStack。
+                this.stackedItems.add(itemStack);
+            }
         }
     }
 

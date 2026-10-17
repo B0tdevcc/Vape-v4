@@ -144,6 +144,11 @@ extends Mod {
         for (int index = 0; index < stacks.size(); ++index) {
             ItemStack stack = stacks.get(index);
             String line = stack.x();
+            // 1.20.1 上 x()（显示名）可能返回 null，直接丢给 getStringWidth(...) 会 NPE，
+            // 让整条标签渲染链中断。给空串兜底。
+            if (line == null) {
+                line = "";
+            }
             if (this.showDistance.getEffectiveValue().booleanValue() && index == 0) {
                 line = ClientSettings.FORMAT_CODE + "a[" + ClientSettings.FORMAT_CODE + "f" + (int)player.getDistanceToEntity(entityItem) + ClientSettings.FORMAT_CODE + "a]" + ClientSettings.FORMAT_CODE + "r " + line;
             }
@@ -223,9 +228,18 @@ extends Mod {
                 } else {
                     int packedLight = 0xF000F0;
                     fontBuffer = Minecraft.H$src$Lgg_vape_wrapper_impl_VoxelShape_$1dlcquv().getBufferSource();
-                    ScorePlayerTeamTextComponent textComponent = ScorePlayerTeamTextComponent.B(line);
-                    fontRenderer.Z(textComponent, -halfWidth, lineY, textColor, false, renderMatrix.toMinecraftMatrix(), fontBuffer, true, 0, packedLight);
-                    fontBuffer.q();
+                    ScorePlayerTeamTextComponent textComponent = null;
+                    try {
+                        textComponent = ScorePlayerTeamTextComponent.B(line);
+                    }
+                    catch (Throwable componentFailure) {
+                        // 1.20.1：TextComponent 的 <init>(String) 桥可能抛 NPE。
+                    }
+                    // component 不可用时不画字（也不抛异常），保证背景框与帧渲染不受影响。
+                    if (textComponent != null && !textComponent.isNull()) {
+                        fontRenderer.Z(textComponent, -halfWidth, lineY, textColor, false, renderMatrix.toMinecraftMatrix(), fontBuffer, true, 0, packedLight);
+                        fontBuffer.q();
+                    }
                 }
             } else if (ForgeVersion.MC_1_16_5.d()) {
                 matrixStack.H();
@@ -271,7 +285,14 @@ extends Mod {
                 if (!entity.isInstance(MappedClasses.zW)) continue;
                 EntityItem entityItem = new EntityItem(entity);
                 if (this.whitelistOnly.getEffectiveValue().booleanValue() && !this.allowedItems.matches(entityItem.getItemStack())) continue;
-                this.groups.add(new ItemESPGroup(this, entityItem));
+                try {
+                    this.groups.add(new ItemESPGroup(this, entityItem));
+                }
+                catch (Throwable groupFailure) {
+                    // 1.20.1：构造分组时会走 rebuildStacks()，其中任何异常都会冒出去
+                    // 中断整个 onPostTick，导致一个分组都建不起来（底框/名牌全都没有）。
+                    // 这里吞掉单个物品的失败，保证其它物品与后续 tick 正常。
+                }
             }
             return;
         }

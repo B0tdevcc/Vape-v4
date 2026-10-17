@@ -67,8 +67,6 @@ The safety of any "Vape"-related program published through other GitHub reposito
 
 **Feature integration**
 
-- Merged upstream new modules: **AutoMace** (auto mace, incl. mace selection / stun slam / aim range / auto-unequip Elytra / smash only / hotbar display), **NoItemRelease** (don't release item), **PearlCatch** (catch pearls), **InventoryOverlay** (inventory overlay display)
-- Merged the Badlion legacy key-event queue for Badlion client key compatibility
 - Embeds **VapeService** (HTTP 8080 + Zeus TCP 8091 companion service), auto-started in the background in-game:
   - Account / settings / profiles / friends / party / location sharing etc. run locally
   - Service data stored at `.vapeclient\vape-service.json` next to the exe, separated from the local config (`.vapeclient\config.json`) so they don't conflict
@@ -124,18 +122,17 @@ The safety of any "Vape"-related program published through other GitHub reposito
 
 - **Fabric runtimes for 1.20.1 / 1.21.1 are unsupported** (Fabric Knot class-loading isolation + slf4j conflict); use the corresponding Forge / NeoForge versions
 - Some HUD overlays (e.g. health overlay) may be positioned incorrectly (offset, e.g. appear bottom-right)
-- If smooth font initialization fails it falls back to legacy font rendering, occasionally leaving black borders on GUI edges
 - If it crashes, please report the log
 
 ## Known hard-to-fix issues
 
-The following issues, after extensive investigation, are mainly caused by **1.20.1 rendering/mappings differing greatly from the code's target versions (1.21.x / 26.x)**, involving several core mapping offsets (entity coordinates, bounding boxes, camera rotation, PoseStack, projection getters etc.). **They are hard to fix and not yet resolved**:
+4.21.41 already fixed the 1.20.1 wiring problems (projection-matrix mapping, blend state, draw order): **ESP 2D/3D boxes, Tracers, arrow direction and the GUI black background are back**.
+The issues below remain; they are mainly caused by **1.20.1's mappings differing greatly from the code's target versions (1.21.x / 26.x)** (text-component construction, block-entity tables, model getters etc.), so they are **hard to fix and not yet resolved**:
 
 **1.20.1 (Forge / NeoForge)**
-- **ESP (2D/3D boxes, names, skeletons) not showing**: entity coordinate/bounding-box or projection values are anomalous on 1.20.1, causing `ProjectedEntityBounds` corner projection to blow up and `onScreen` to be always false; rotation fixes, bounding-box method accessors, `entity.b()` clamp, fallback perspective and more have been tried without a full fix
-- **Tracers not showing**: the camera-relative convention of start/end coordinates is offset from 1.20.1 projection
-- **Arrows direction indicator is off** (entities in front mirrored left-right): the handedness of projection rotation is flipped on 1.20.1
-- **Potion icons / armor (equipment) icons not showing**: `getBakedModel`/`getSpriteTexture` mappings fail on 1.20.1; currently handled by a graceful skip (no crash, no lag, but no display)
+- **World text is missing**: text inside item label boxes, NameTags, and the distance text of Indicators and Arrows. The text-component construction bridge cannot be resolved on 1.20.1, so the code now simply skips the text (no exception thrown) until it is rebuilt as screen-space 2D drawing
+- **StorageESP (chest ESP) and Search do not show**: the block-entity table that container ESP relies on cannot be resolved on 1.20.1, and the render exception is silently swallowed
+- **Potion icons / armor (equipment) icons not showing**: `getBakedModel` / `getSpriteTexture` mappings fail on 1.20.1; currently handled by a graceful skip (no crash, no lag, but no display)
 
 **26.2 is an experimental adaptation and may have the following issues**:
 
@@ -153,6 +150,57 @@ The following issues, after extensive investigation, are mainly caused by **1.20
 **For 26.1.2 and 26.2, inject after entering a server or single-player world.**
 
 All target instances must use a 64-bit JVM.
+
+## FAQ
+
+### 1. The loader does not list the game
+
+The loader finds the game through the Java process and its visible window title, so only processes whose window title contains `Minecraft`, `Lunar` or `Feather` are listed.
+
+Wait until the game reaches the main menu, make sure it runs on a 64-bit JVM, and double-check the selected PID, game version and runtime. Supported: 1.7.10, 1.8.9, 1.12.2, 1.21.11 and 26.2 Vanilla, plus 1.21.11 / 26.2 Fabric. Do not inject into similarly titled launcher helper JVMs or other Java programs.
+
+### 2. The loader hangs after the game process is picked
+
+If that Minecraft process has already been injected with Vape, injecting into the same process a second time always hangs, whether or not the first Vape load succeeded.
+
+If the first injection failed, restart Minecraft and inject again.
+
+### 3. The loader reports "Vape421Native.dll was not found beside the Loader"
+
+That message refers to `Vape-v4.21Native.dll` in the loader's directory (the optional external DLL described under "Main artifact"): the DLL must sit in the same directory as the loader.
+
+### 4. The loader reports "Product DLL did not acknowledge…" or "Unexpected…"
+
+Vape 4.21 supports 1.7.10, 1.8.9, 1.12.2, 1.21.11 and 26.2 Vanilla, plus 1.21.11 / 26.2 Fabric; other Fabric versions are outside the current support scope.
+
+This status means the injection failed: check that Minecraft is a supported version, restart the game and inject again. If the problem persists, inspect `vape421-native.log` and report the issue.
+
+### 5. The loader shows "Finished Loading", but the in-game "Finished Loading" notification never appears
+
+This means the injection failed: check that Minecraft is a supported version, restart the game and inject again. If the problem persists, inspect `vape421-native.log` and report the issue.
+
+### 6. An injection error code appears, or field / method mappings fail or the client crashes
+
+Check that Minecraft is a supported version, restart the game and inject again. If the problem persists, inspect `vape421-native.log` and report the issue.
+
+### 7. The ClickGUI opens but cannot be clicked, the cursor is misplaced or keys get stuck
+
+Open an issue and describe in detail when the problem appears and how to reproduce it.
+
+### 8. A Render module causes OpenGL 1283, a vanishing HUD, corrupted visuals or a crash
+
+Compatibility for Minecraft 1.16.5 and other unlisted 1.16+ versions is still poor. Use these verified combinations:
+
+- 1.21.11 Forge: Forge 61.0.8 (verified)
+- 1.21.11 Fabric: Fabric Loader 0.19.3
+- 26.2 Forge: Forge 65.1.0 (verified)
+- 26.2 Fabric: Fabric Loader 0.19.3
+
+### 9. Configs disappear, saving fails, or friend / party state is wrong
+
+VapeService stores accounts and configs in a single local JSON file, and the data path is relative to the working directory — starting from another directory looks like a brand-new account. A corrupted file, missing write permission, a full disk, several Service instances running at once or an abnormal exit can all affect saving. A new Zeus connection for the same account replaces the old one, and high-frequency online state does not recover by itself after a Service restart, system sleep or network switch.
+
+Always pass an explicit `--data-file` path and keep regular backups, and never let two Service instances write the same file. The Service is an experimental compatibility layer: some public config, comment, report, tag and pagination behaviour is simplified, so a successful connection does not mean every original Online feature works.
 
 ## Embedded service config
 

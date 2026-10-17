@@ -84,16 +84,27 @@ extends Wrapper {
         if (this.toString().contains("minecraft:air")) {
             return true;
         }
+        if (ItemStack.nameLookupUnavailable) {
+            // 已确认取名链路不可用：不再每物品重试（避免反射失败兜底 + 日志风暴）。
+            return false;
+        }
         String string = this.x();
         // 1.20.1 上 x()（getHoverName / 显示名）的映射解析失败时返回 null，旧代码紧接着
         // string.isEmpty() 会抛 NPE；这个异常会一路冒到调用方（例如 ItemESP.onPostTick
         // 里 new ItemESPGroup(...) → rebuildStacks() → isNotNull()），导致物品商品分组
         // 一个都建不起来、名牌整条链静默失效。名字取不到时保守地当作"非空物品"。
         if (string == null) {
+            ItemStack.nameLookupUnavailable = true;
             return false;
         }
         return string.isEmpty() || string.equals("Air");
     }
+
+    /**
+     * 取名链路一旦确认不可用就记住，避免逐物品/逐帧重复走"取不到 → 兜底"的昂贵路径
+     * （该路径在 1.20.1 上曾造成每物品一条 NPE 日志、帧率骤降）。
+     */
+    private static boolean nameLookupUnavailable;
 
     public void s(int n) {
         MItemStack.b(ItemStack.vapeInstance.getMappings().q8, this.I, n);

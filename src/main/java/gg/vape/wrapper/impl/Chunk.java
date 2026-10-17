@@ -48,7 +48,14 @@ extends Wrapper {
 
 
     public Map l() {
-        return (Map)Chunk.vapeInstance.getMappings().qD.j(this.I);
+        // 1.20.1：字段 blockEntities 的映射可能解析不到（返回 null），旧代码直接 .values()
+        // 会 NPE，使 StorageESP 整段遍历抛异常、一个箱子都画不出来。
+        // 这里改为"字段不可用 → 退到 getBlockEntities()"，两者都不可用时返回空表。
+        Object blockEntities = gg.vape.mapping.mappings.MChunk.getBlockEntityMap(Chunk.vapeInstance.getMappings().qD, this.I);
+        if (blockEntities instanceof Map) {
+            return (Map)blockEntities;
+        }
+        return java.util.Collections.emptyMap();
     }
 
     public List<ChunkSection> U() {

@@ -43,6 +43,8 @@ extends Mod {
     private static final long MODULE_COLOR = 6320396365828000318L;
     private final BooleanValue scaleOpacity;
     private final Map<Entity, double[]> projectedPositions;
+    // 本帧图标是否已在世界阶段画掉（决定 2D 阶段是否还要画）。
+    private boolean iconsDrawnInWorldPhase;
 
     @EventHandler
     public void onRender2D(EventRender2D event) {
@@ -109,9 +111,9 @@ extends Mod {
                 RenderUtils.f();
                 OpenGlBackendHolder.backend.popMatrix();
             }
-            // 1.20.1：图标已改到世界阶段画完并立即冲刷（见 drawArrowIconsBeforeHud），
-            // 这里只保留距离文字，保证箭头不再压在游戏 HUD 之上。
-            if (!this.shouldDrawIconsInWorldPhase()) {
+            // 1.20.1：图标优先在世界阶段画完并立即冲刷（见 drawArrowIconsBeforeHud），
+            // 这里只保留距离文字；若世界阶段因队列非空/异常而没画，则退回这里绘制。
+            if (!this.iconsDrawnInWorldPhase) {
                 OpenGlBackendHolder.backend.pushMatrix();
                 RenderUtils.g();
                 OpenGlBackendHolder.backend.translate(arrowX + (double)centerX, arrowY + (double)centerY, 0.0);
@@ -180,6 +182,14 @@ extends Mod {
     // 用 GUI 正交投影把箭头图标画完并立即冲刷（与 ESP2D 相同的做法），随后还原
     // 投影/视图/矩阵栈，不影响随后 ESP/Tracers/NameTags 的世界批次。
     private void drawArrowIconsBeforeHud() {
+        RenderBatchManager batchManager = RenderBatchManager.getInstance();
+        // 只有"队列里没有别人的批次"时才提前冲刷：否则会把别的模块排队的 GUI 批次
+        // （可能带 standalone 回调，内含 MC 原生绘制）拉到世界阶段执行，容易造成卡顿/崩溃。
+        // 这种情况下返回 false，让图标退回 2D 阶段绘制（安全路径）。
+        if (batchManager.getGuiBatchCount() != 0 || batchManager.isWithinGuiFlush()) {
+            this.iconsDrawnInWorldPhase = false;
+            return;
+        }
         int displayWidth = Minecraft.J();
         int displayHeight = Minecraft.h();
         float centerX = (float)displayWidth / 4.0f;
@@ -195,7 +205,12 @@ extends Mod {
             for (Map.Entry<Entity, double[]> entry : this.projectedPositions.entrySet()) {
                 this.drawArrowIconBeforeHud(entry.getValue(), displayWidth, displayHeight, centerX, centerY);
             }
-            RenderBatchManager.getInstance().flushGuiBatches(0.0f, false);
+            batchManager.flushGuiBatches(0.0f, false);
+            this.iconsDrawnInWorldPhase = true;
+        }
+        catch (Throwable drawFailure) {
+            // 世界阶段绘制失败时退回 2D 阶段，绝不影响主渲染流程。
+            this.iconsDrawnInWorldPhase = false;
         }
         finally {
             BufferedGuiRenderPrimitives.projectionMatrix = savedProjection;
@@ -211,6 +226,7 @@ extends Mod {
 
     @EventHandler
     public void onRender3D(EventRender3D event) {
+        this.iconsDrawnInWorldPhase = false;
         this.projectedPositions.clear();
         RenderUtil.d();
         for (Object entityHandle : Minecraft.theWorld().z()) {
@@ -224,9 +240,11 @@ extends Mod {
         }
         RenderUtil.Y();
         // 1.20.1：把箭头图标提前到世界阶段画完并立即冲刷，使其排在游戏 HUD 之前。
+        // 只在"确实有箭头要画"且当前不在 GUI 冲刷内部时执行，避免每帧空冲刷/递归冲刷。
         if (this.shouldDrawIconsInWorldPhase()
                 && !this.projectedPositions.isEmpty()
-                && !OffscreenRenderContext.isRenderingOffscreen()) {
+                && !OffscreenRenderContext.isRenderingOffscreen()
+                && !RenderBatchManager.getInstance().isWithinGuiFlush()) {
             this.drawArrowIconsBeforeHud();
         }
     }

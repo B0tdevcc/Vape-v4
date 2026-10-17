@@ -1,5 +1,32 @@
 # 更新日志
 
+## v4.21.42 (2026-10-17)
+
+**卡顿 / 崩溃修复（NPE 日志风暴）+ 箱子 ESP 修复**
+
+### 卡顿与崩溃：未登记字段的每次访问都在抛 NPE + 打印调用栈
+
+`Reflections.getField(int, Object)` 在字段 id 未登记时只做 `field(id).get(instance)`，未命中即 NPE，然后 `System.err.println("Failed allocate field: …")` + `printStackTrace()` —— **每次访问都来一遍**。1.20.1 上字段 `702` 从未登记，而逐物品渲染路径（物品名/物品 ESP 遍历）每帧都要访问它，于是渲染线程每帧刷出成百上千条 `[STDERR] NullPointerException` + 完整调用栈：帧率被打死，日志被刷爆，量大时游戏直接卡死/崩溃。
+
+修复：
+- `Reflections` 新增 `UNAVAILABLE_FIELD_IDS`，失败结果 **memoize**；同一 id 只记录一行 `Field mapping unavailable: <id>`，此后 O(1) 短路返回 null，**不再反射、不再抛异常、不再打印栈**；访问异常也改为只报一次且不调用实例的 `toString()`（那本身就是额外开销）；
+- `ItemStack.isNull()` 在取名链路失败后置标记并短路，不再逐物品重复走昂贵路径；
+- 返回值语义不变（仍为 null），正常版本字段都登记成功，只多一次 `contains`，行为与性能不变。
+
+### 顺带：每帧渲染工作量优化
+
+- `Arrows` 的世界阶段绘制改为「仅当 GUI 批次队列为空且不在冲刷中」才执行，整段 `try/catch` 兜底，否则退回 2D 阶段绘制 —— 不会再把他人的 GUI 批次（含 MC 原生绘制回调）拉到不当时机，也不会拖垮主渲染；
+- `RenderBatchManager` 增加冲刷**重入守卫**（杜绝"冲刷→再入队→再冲刷"），每批次栅格状态重申改为脏标记驱动（仅回调之后重申一次）；
+- `ensureGuiBlendState()` 加去抖（`glIsEnabled` 早退 + 本帧已重申标记），不再每张图下发两次 GL 调用。
+
+### 箱子 ESP（存储 ESP）不显示
+
+`StorageESP` 通过 `World.getTileEntities → Chunk.l()` 读取方块实体表，而 `Chunk.l()` 只读字段映射 `blockEntities`；1.20.1 上该字段解析不到时 `j()` 返回 null，`.values()` 直接 NPE，整个 `onRender3D` 抛出并被事件系统吞掉 ⇒ 一个框都画不出来且无任何可见报错。
+
+修复：`MChunk` 新增 `getBlockEntities()` 方法映射（`MC_1_17+` 窗口，与字段同窗口）与安全访问器，**字段优先、字段不可用则退方法、都不可用返回 null**；`Chunk.l()` 改为走该访问器并在非 `Map` 时返回 `Collections.emptyMap()` ⇒ 不再可能 NPE。其它版本字段正常解析，取数路径与结果完全不变。
+
+> 已知问题（沿用 4.21.41）：1.20.1 的世界文字（物品标签框内文字、NameTags、Indicators / 箭头距离文字）仍缺，后续按"屏幕空间 2D 绘制"路线补齐。
+
 ## v4.21.41 (2026-10-17)
 
 **原版 1.20.1 渲染修复：投影矩阵映射、模糊层黑块、2D 混合状态、箭头绘制顺序、物品标签**

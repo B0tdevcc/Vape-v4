@@ -105,6 +105,15 @@ public class RenderBatchManager {
         return this.exceedsBatchCapacity(builder, worldSpace);
     }
 
+    /**
+     * 当前待冲刷的 GUI 批次数。用于"立即冲刷"的场景判断队列里是否只有自己排的内容
+     * （队列里混着别的模块的批次时，提前冲刷会把它们的 standalone 回调拉到不合适的
+     * 绘制阶段执行，可能导致卡顿/崩溃）。
+     */
+    public int getGuiBatchCount() {
+        return this.guiBatches.size();
+    }
+
     public int getLastBatchMergeCount(boolean worldSpace) {
         try {
             if (worldSpace) {
@@ -157,12 +166,18 @@ public class RenderBatchManager {
      * WARNING - Removed try catching itself - possible behaviour change.
      */
     public void flushGuiBatches(float partialTicks, boolean resetProjection) {
+        if (this.withinGuiFlush) {
+            // 重入保护：立即冲刷（Arrows/ESP2D 等）发生在别的绘制流程里时不能再递归进入，
+            // 否则批次队列会被边冲刷边清空，可能出现自激循环/长时间卡顿。
+            return;
+        }
         if (this.guiBatches.isEmpty()) {
             return;
         }
         if (resetProjection) {
             LocalPlayerRotationUtil.resetProjectionMatrix();
         }
+        this.withinGuiFlush = true;
         this.captureGlBindings();
         this.saveAndPrepareGlState();
         // 26.x: the GUI pass (GuiRenderer.render) binds the main render target;
@@ -173,6 +188,10 @@ public class RenderBatchManager {
         boolean previousSkipWorldFramebufferBind = this.skipWorldFramebufferBind;
         this.skipWorldFramebufferBind = false;
         try {
+            // 脏标记：只有 standalone/drawSetup 回调跑过（它们会随意改 GL 状态）才需要
+            // 在下一批次前重申栅格状态。没有回调的普通批次由 saveAndPrepareGlState()
+            // 在冲刷开始时设置一次即可，避免每批次 5 次裸 GL 调用带来的开销。
+            boolean rasterStateDirty = false;
             for (RenderBatch renderBatch : this.guiBatches) {
                 this.ensureBatchResourcesBound();
                 boolean scissorTestEnabled = GL11.glIsEnabled((int)3089);
@@ -194,24 +213,25 @@ public class RenderBatchManager {
                     }
                     this.captureGlBindings();
                     // standalone 回调里跑的是 MC 原生绘制，会随意改 blend/depthTest，
-                    // 这里重新落一遍 GUI 批次需要的栅格状态，避免泄漏到后续批次。
-                    RenderBatchManager.prepareGuiRasterState();
+                    // 标记为脏，下一批次绘制前再重申一次，避免泄漏到后续批次。
+                    rasterStateDirty = true;
                     continue;
                 }
                 if (renderBatch.getDrawSetupCallback() != null) {
                     renderBatch.getDrawSetupCallback().get();
+                    rasterStateDirty = true;
                 }
-                // 每个批次真正绘制前重申 GUI 栅格状态。saveAndPrepareGlState() 只在冲刷开始设置
-                // 一次，而批次之间会穿插 standalone/drawSetup 回调与 MC 原生绘制，它们可能关掉
-                // blend 或打开 depthTest：随后绘制的带纹理批次（图标/按钮贴图）就会在混合关闭
-                // 状态下画出不透明黑底。无泄漏时这些调用幂等，不影响其它版本。
-                RenderBatchManager.prepareGuiRasterState();
+                if (rasterStateDirty) {
+                    RenderBatchManager.prepareGuiRasterState();
+                    rasterStateDirty = false;
+                }
                 this.batchBuffer.stageBatch(renderBatch);
                 if (!this.batchResourcesBound) continue;
                 this.batchBuffer.draw();
             }
         }
         finally {
+            this.withinGuiFlush = false;
             this.skipWorldFramebufferBind = previousSkipWorldFramebufferBind;
             this.guiBatches.clear();
             this.lastGuiBuilder = null;
@@ -249,16 +269,41 @@ public class RenderBatchManager {
     /**
      * 幂等的 GUI 混合状态重申（只动混合）。2D/HUD 阶段里的立即模式绘制（MC 字体/物品图标
      * 经 RenderItemTextBridge、ImageRenderer 的图标路径）不走批次，批次前的状态重申覆盖
-     * 不到它们；混合关闭时贴图透明像素会被写成黑色（黑底）。在 2D/GUI/图标入口各调一次。
+     * 不到它们；混合关闭时贴图透明像素会被写成黑色（黑底）。
+     * <p>
+     * 性能：该方法会被 HUD 的图标绘制高频调用，这里用"本帧已重申"标记 + 一次
+     * {@code glIsEnabled} 早退，正常情况下每帧只真正下发一次状态。
      */
     public static void ensureGuiBlendState() {
+        if (RenderBatchManager.guiBlendStateEnsured && GL11.glIsEnabled((int)3042)) {
+            return;
+        }
         GL11.glEnable((int)3042);
         GlStateManager.Y(770, 771);
+        RenderBatchManager.guiBlendStateEnsured = true;
     }
+
+    /**
+     * 每帧（2D/GUI 阶段开始）重置"混合已重申"标记：阶段之间 MC 自己会改状态，
+     * 必须允许再次重申。
+     */
+    public static void resetGuiBlendEnsure() {
+        RenderBatchManager.guiBlendStateEnsured = false;
+    }
+
+    /** GUI 冲刷是否正在进行（防止 Arrows/ESP2D 之类的立即冲刷再次进入） */
+    public boolean isWithinGuiFlush() {
+        return this.withinGuiFlush;
+    }
+
+    private static boolean guiBlendStateEnsured;
 
     public void flushGuiBatches(float partialTicks) {
         this.flushGuiBatches(partialTicks, true);
     }
+
+    // 冲刷重入守卫（见 isWithinGuiFlush）
+    private boolean withinGuiFlush;
 
     private static Throwable propagateThrowable(Throwable throwable) {
         return throwable;

@@ -22,6 +22,36 @@ extends Mapping {
     private MappingMethod N;
     private MappingField q;
     private MappingMethod o;
+    // 1.17+：方块实体表既可能是字段 blockEntities，也可能只能通过
+    // LevelChunk#getBlockEntities() 取到。字段映射在部分版本（如 1.20.1）解析不到，
+    // 会导致 StorageESP 遍历到空列表/直接 NPE，所以这里补一条方法映射作为回退。
+    private MappingMethod blockEntityMapMethod;
+
+    /**
+     * 取"方块实体表"：优先用字段（原逻辑），字段不可用时退到 getBlockEntities()，
+     * 两者都不可用则返回 null（调用方需按"没有方块实体"处理，不要抛异常）。
+     */
+    public static Object getBlockEntityMap(MChunk mChunk, Object chunk) {
+        Object fromField = null;
+        try {
+            fromField = mChunk.j(chunk);
+        }
+        catch (Throwable fieldFailure) {
+            fromField = null;
+        }
+        if (fromField != null) {
+            return fromField;
+        }
+        if (mChunk.blockEntityMapMethod != null && !mChunk.blockEntityMapMethod.hasResolutionFailed()) {
+            try {
+                return mChunk.blockEntityMapMethod.invokeObject(chunk);
+            }
+            catch (Throwable methodFailure) {
+                return null;
+            }
+        }
+        return null;
+    }
 
     public int M(Object object) {
         return this.k.getInt(object);
@@ -118,6 +148,8 @@ extends Mapping {
             String string3 = "blockEntities";
             MChunk mChunk3 = this;
             this.q = ((MappingFieldBuilder)this.fieldBuilder(string3, clazz3).setOwnerClassForVersion(ForgeVersion.MC_1_20_6.n(), MappedClasses.V)).buildField();
+            // 回退：LevelChunk#getBlockEntities()（返回 Map<BlockPos, BlockEntity>）。
+            this.blockEntityMapMethod = this.Y("getBlockEntities", true, clazz3, new Class[0]);
         }
     }
 

@@ -19,6 +19,11 @@ public class Reflections {
     public static final Map<Integer, Constructor<?>> CONSTRUCTORS_BY_ID = new HashMap();
     private static final Set<Integer> REPORTED_INVOCATION_FAILURES =
             Collections.newSetFromMap(new ConcurrentHashMap<Integer, Boolean>());
+    // 已确认不可用的字段 id：解析失败后只记录一次，后续访问直接短路返回 null。
+    // 没有这个短路时，调用方（例如逐物品渲染路径）会每帧、每物品重试反射并打印一条
+    // "Failed allocate field"，产生 NPE 风暴、把帧率打死并刷爆日志。
+    private static final Set<Integer> UNAVAILABLE_FIELD_IDS =
+            Collections.newSetFromMap(new ConcurrentHashMap<Integer, Boolean>());
 
     public static void getMethod(int id, Class<?> owner, String name, String descriptor, boolean remap, boolean isStatic) throws NoSuchMethodException {
         if (name.equals("<init>")) {
@@ -179,7 +184,9 @@ public class Reflections {
             FIELDS_BY_ID.put(id, field);
             return;
         }
-        System.out.println("Failed allocate field: " + id + " " + name + " IN " + owner.getName());
+        if (UNAVAILABLE_FIELD_IDS.add(id)) {
+            System.err.println("Failed allocate field: " + id + " " + name + " IN " + owner.getName());
+        }
         throw new NoSuchFieldException();
     }
 
@@ -284,12 +291,29 @@ public class Reflections {
     }
 
     public static <T> T getField(int id, Object instance) {
+        // 失败 memoize：同一 id 解析不到时只提示一次，之后直接返回 null，
+        // 不再每帧/每物品抛 NPE + 打印（这是 1.20.1 卡顿与日志风暴的根因）。
+        if (UNAVAILABLE_FIELD_IDS.contains(id)) {
+            return null;
+        }
+        Field field = FIELDS_BY_ID.get(id);
+        if (field == null) {
+            if (UNAVAILABLE_FIELD_IDS.add(id)) {
+                System.err.println("Field mapping unavailable: " + id
+                        + " IN " + (instance == null ? "null" : instance.getClass().getName())
+                        + " (further attempts suppressed)");
+            }
+            return null;
+        }
         try {
-            return (T)Reflections.field(id).get(instance);
+            return (T)field.get(instance);
         }
         catch (Exception failure) {
-            System.err.println("Failed allocate field: " + id + " IN " + instance + " " + FIELDS_BY_ID.size());
-            failure.printStackTrace();
+            if (UNAVAILABLE_FIELD_IDS.add(id)) {
+                System.err.println("Failed access field: " + id
+                        + " IN " + (instance == null ? "null" : instance.getClass().getName()));
+                failure.printStackTrace();
+            }
             return null;
         }
     }
